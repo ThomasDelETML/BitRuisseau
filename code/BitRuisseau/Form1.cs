@@ -15,6 +15,13 @@ namespace BitRuisseau
         private BindingList<Song> _localSongsBinding = new BindingList<Song>();
         private BindingList<Song> _remoteSongsBinding = new BindingList<Song>();
 
+        // Liste complète (avant filtre/tri)
+        private List<Song> _allLocalSongs = new List<Song>();
+
+        // État du tri
+        private string _currentSortColumn = nameof(Song.Title);
+        private bool _currentSortAscending = true;
+
         public MainForm()
         {
             InitializeComponent();
@@ -42,37 +49,43 @@ namespace BitRuisseau
             {
                 DataPropertyName = nameof(Song.Title),
                 HeaderText = "Titre",
-                Width = 150
+                Width = 150,
+                SortMode = DataGridViewColumnSortMode.Programmatic
             });
             dgvLocalSongs.Columns.Add(new DataGridViewTextBoxColumn
             {
                 DataPropertyName = nameof(Song.Artist),
                 HeaderText = "Artiste",
-                Width = 120
+                Width = 120,
+                SortMode = DataGridViewColumnSortMode.Programmatic
             });
             dgvLocalSongs.Columns.Add(new DataGridViewTextBoxColumn
             {
                 DataPropertyName = nameof(Song.Year),
                 HeaderText = "Année",
-                Width = 60
+                Width = 60,
+                SortMode = DataGridViewColumnSortMode.Programmatic
             });
             dgvLocalSongs.Columns.Add(new DataGridViewTextBoxColumn
             {
                 DataPropertyName = nameof(Song.Duration),
                 HeaderText = "Durée",
-                Width = 80
+                Width = 80,
+                SortMode = DataGridViewColumnSortMode.Programmatic
             });
             dgvLocalSongs.Columns.Add(new DataGridViewTextBoxColumn
             {
                 DataPropertyName = nameof(Song.Size),
                 HeaderText = "Taille (octets)",
-                Width = 100
+                Width = 100,
+                SortMode = DataGridViewColumnSortMode.Programmatic
             });
             dgvLocalSongs.Columns.Add(new DataGridViewTextBoxColumn
             {
                 DataPropertyName = nameof(Song.FeaturingText),
                 HeaderText = "Featuring",
-                Width = 150
+                Width = 150,
+                SortMode = DataGridViewColumnSortMode.Programmatic
             });
 
             _localSongsBinding = new BindingList<Song>();
@@ -110,6 +123,8 @@ namespace BitRuisseau
             // Médiathèque locale
             btnSelectFolder.Click += BtnSelectFolder_Click;
             dgvLocalSongs.DoubleClick += DgvLocalSongs_DoubleClick;
+            dgvLocalSongs.ColumnHeaderMouseClick += DgvLocalSongs_ColumnHeaderMouseClick;
+            txtFilter.TextChanged += TxtFilter_TextChanged;
 
             // Médiathèques connectées
             btnRefreshMediatheques.Click += BtnRefreshMediatheques_Click;
@@ -128,12 +143,14 @@ namespace BitRuisseau
             if (!string.IsNullOrWhiteSpace(_localLibrary.RootFolder))
             {
                 lblFolder.Text = _localLibrary.RootFolder;
-                _localSongsBinding = new BindingList<Song>(_localLibrary.Songs);
-                dgvLocalSongs.DataSource = _localSongsBinding;
+                _allLocalSongs = _localLibrary.Songs.ToList();
+                ApplyLocalFilterAndSort();
             }
             else
             {
                 lblFolder.Text = "Aucun dossier sélectionné";
+                _allLocalSongs = new List<Song>();
+                ApplyLocalFilterAndSort();
             }
         }
 
@@ -150,15 +167,118 @@ namespace BitRuisseau
                     _localLibrary.SetFolder(dlg.SelectedPath);
                     lblFolder.Text = dlg.SelectedPath;
 
-                    _localSongsBinding = new BindingList<Song>(_localLibrary.Songs);
-                    dgvLocalSongs.DataSource = _localSongsBinding;
+                    _allLocalSongs = _localLibrary.Songs.ToList();
+                    ApplyLocalFilterAndSort();
                 }
             }
         }
 
+        private void TxtFilter_TextChanged(object sender, EventArgs e)
+        {
+            ApplyLocalFilterAndSort();
+        }
+
+        private void DgvLocalSongs_ColumnHeaderMouseClick(object sender, DataGridViewCellMouseEventArgs e)
+        {
+            var column = dgvLocalSongs.Columns[e.ColumnIndex];
+            var propertyName = column.DataPropertyName;
+
+            if (string.IsNullOrEmpty(propertyName))
+                return;
+
+            if (_currentSortColumn == propertyName)
+                _currentSortAscending = !_currentSortAscending;
+            else
+            {
+                _currentSortColumn = propertyName;
+                _currentSortAscending = true;
+            }
+
+            ApplyLocalFilterAndSort();
+
+            // Indicateur visuel de tri
+            foreach (DataGridViewColumn col in dgvLocalSongs.Columns)
+            {
+                col.HeaderCell.SortGlyphDirection = SortOrder.None;
+            }
+            column.HeaderCell.SortGlyphDirection =
+                _currentSortAscending ? SortOrder.Ascending : SortOrder.Descending;
+        }
+
+        private void ApplyLocalFilterAndSort()
+        {
+            IEnumerable<Song> songs = _allLocalSongs;
+
+            var query = txtFilter.Text?.Trim() ?? string.Empty;
+            if (!string.IsNullOrEmpty(query))
+            {
+                songs = songs.Where(s =>
+                    (!string.IsNullOrEmpty(s.Title) &&
+                     s.Title.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0) ||
+                    (!string.IsNullOrEmpty(s.Artist) &&
+                     s.Artist.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0));
+            }
+
+            if (!string.IsNullOrEmpty(_currentSortColumn))
+            {
+                songs = _currentSortAscending
+                    ? songs.OrderBy(s => GetPropertyValue(s, _currentSortColumn))
+                    : songs.OrderByDescending(s => GetPropertyValue(s, _currentSortColumn));
+            }
+
+            _localSongsBinding = new BindingList<Song>(songs.ToList());
+            dgvLocalSongs.DataSource = _localSongsBinding;
+        }
+
+        private object GetPropertyValue(Song song, string propertyName)
+        {
+            var prop = typeof(Song).GetProperty(propertyName);
+            return prop?.GetValue(song, null);
+        }
+
         private void DgvLocalSongs_DoubleClick(object sender, EventArgs e)
         {
-            // Ici tu pourras plus tard lancer la lecture du morceau sélectionné
+            if (dgvLocalSongs.CurrentRow == null)
+                return;
+
+            var song = dgvLocalSongs.CurrentRow.DataBoundItem as Song;
+            if (song == null)
+                return;
+
+            // Détail média
+            var detail = $"Titre : {song.Title}\n" +
+                         $"Artiste : {song.Artist}\n" +
+                         $"Année : {song.Year}\n" +
+                         $"Durée : {song.Duration}\n" +
+                         $"Taille : {song.Size} octets\n" +
+                         $"Featuring : {song.FeaturingText}\n" +
+                         $"Fichier : {song.FilePath}";
+
+            MessageBox.Show(detail, "Détail du média",
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+            // Lecture locale simple pour les WAV (démo)
+            try
+            {
+                if (string.IsNullOrWhiteSpace(song.FilePath) || !File.Exists(song.FilePath))
+                    return;
+
+                var ext = Path.GetExtension(song.FilePath).ToLowerInvariant();
+                if (ext != ".wav")
+                {
+                    // Pour la démo on ne lit que les WAV
+                    return;
+                }
+
+                using (var player = new System.Media.SoundPlayer(song.FilePath))
+                {
+                    player.Play();
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Erreur lors de la lecture du média : " + ex.Message);
+            }
         }
 
         #endregion
@@ -200,15 +320,6 @@ namespace BitRuisseau
 
             var remoteSong = current;
 
-            // Dans une vraie implémentation :
-            // 1. _protocol.AskMedia(...)
-            // 2. Réception Message avec SongData (base64)
-            // 3. Conversion en bytes + File.WriteAllBytes(...)
-            // 4. Rechargement de la médiathèque locale
-
-            // Ici, comme FakeProtocol renvoie les mêmes fichiers locaux, on simule un import
-            // en copiant simplement le fichier dans le dossier local s'il existe.
-
             if (string.IsNullOrWhiteSpace(_localLibrary.RootFolder))
             {
                 MessageBox.Show("Aucun dossier local configuré.");
@@ -235,8 +346,8 @@ namespace BitRuisseau
 
             // Recharge la médiathèque locale
             _localLibrary.SetFolder(_localLibrary.RootFolder);
-            _localSongsBinding = new BindingList<Song>(_localLibrary.Songs);
-            dgvLocalSongs.DataSource = _localSongsBinding;
+            _allLocalSongs = _localLibrary.Songs.ToList();
+            ApplyLocalFilterAndSort();
         }
 
         #endregion
