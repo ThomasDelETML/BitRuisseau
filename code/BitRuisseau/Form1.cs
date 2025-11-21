@@ -107,12 +107,34 @@ namespace BitRuisseau
 
         private void HookEvents()
         {
+            // Médiathèque locale
             btnSelectFolder.Click += BtnSelectFolder_Click;
             dgvLocalSongs.DoubleClick += DgvLocalSongs_DoubleClick;
 
+            // Médiathèques connectées
             btnRefreshMediatheques.Click += BtnRefreshMediatheques_Click;
             lstMediatheques.SelectedIndexChanged += LstMediatheques_SelectedIndexChanged;
             btnImportSong.Click += BtnImportSong_Click;
+
+            // Chargement au démarrage
+            this.Load += MainForm_Load;
+        }
+
+        private void MainForm_Load(object sender, EventArgs e)
+        {
+            // Restaure le dernier dossier utilisé si possible
+            _localLibrary.RestoreLastFolder();
+
+            if (!string.IsNullOrWhiteSpace(_localLibrary.RootFolder))
+            {
+                lblFolder.Text = _localLibrary.RootFolder;
+                _localSongsBinding = new BindingList<Song>(_localLibrary.Songs);
+                dgvLocalSongs.DataSource = _localSongsBinding;
+            }
+            else
+            {
+                lblFolder.Text = "Aucun dossier sélectionné";
+            }
         }
 
         #endregion
@@ -136,15 +158,7 @@ namespace BitRuisseau
 
         private void DgvLocalSongs_DoubleClick(object sender, EventArgs e)
         {
-            if (dgvLocalSongs.CurrentRow != null)
-            {
-                var song = dgvLocalSongs.CurrentRow.DataBoundItem as Song;
-                if (song != null && !string.IsNullOrWhiteSpace(song.FilePath))
-                {
-                    wmpPlayer.URL = song.FilePath;
-                    wmpPlayer.Ctlcontrols.play();
-                }
-            }
+            // Ici tu pourras plus tard lancer la lecture du morceau sélectionné
         }
 
         #endregion
@@ -292,6 +306,13 @@ namespace BitRuisseau
         public string RootFolder { get; private set; }
         public List<Song> Songs { get; private set; }
 
+        // Persistance du choix de dossier dans %AppData%\BitRuisseau
+        private string ConfigDirectory =>
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "BitRuisseau");
+
+        private string ConfigFilePath =>
+            Path.Combine(ConfigDirectory, "localmedialibrary.txt");
+
         public LocalMediaLibrary()
         {
             Songs = new List<Song>();
@@ -300,7 +321,48 @@ namespace BitRuisseau
         public void SetFolder(string folder)
         {
             RootFolder = folder;
+            SaveRootFolder();
             LoadSongs();
+        }
+
+        public void RestoreLastFolder()
+        {
+            try
+            {
+                if (!File.Exists(ConfigFilePath))
+                    return;
+
+                var folder = File.ReadAllText(ConfigFilePath).Trim();
+                if (string.IsNullOrWhiteSpace(folder))
+                    return;
+
+                if (!Directory.Exists(folder))
+                    return;
+
+                RootFolder = folder;
+                LoadSongs();
+            }
+            catch
+            {
+                // En cas de problème de lecture, on ignore et on démarre sans dossier
+            }
+        }
+
+        private void SaveRootFolder()
+        {
+            try
+            {
+                if (!Directory.Exists(ConfigDirectory))
+                {
+                    Directory.CreateDirectory(ConfigDirectory);
+                }
+
+                File.WriteAllText(ConfigFilePath, RootFolder ?? string.Empty);
+            }
+            catch
+            {
+                // On ignore les erreurs de persistance pour ne pas bloquer l’application
+            }
         }
 
         private void LoadSongs()

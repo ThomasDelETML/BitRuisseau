@@ -62,12 +62,11 @@
             dgvLocalSongs.AllowUserToAddRows = false;
             dgvLocalSongs.AllowUserToDeleteRows = false;
             dgvLocalSongs.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize;
-            dgvLocalSongs.Location = new Point(23, 110);
+            dgvLocalSongs.Location = new Point(68, 250);
             dgvLocalSongs.Name = "dgvLocalSongs";
             dgvLocalSongs.ReadOnly = true;
             dgvLocalSongs.Size = new Size(240, 150);
             dgvLocalSongs.TabIndex = 2;
-            dgvLocalSongs.CellContentClick += dgvLocalSongs_CellContentClick;
             // 
             // btnRefreshMediatheques
             // 
@@ -82,7 +81,7 @@
             // 
             lstMediatheques.FormattingEnabled = true;
             lstMediatheques.ItemHeight = 15;
-            lstMediatheques.Location = new Point(518, 93);
+            lstMediatheques.Location = new Point(567, 86);
             lstMediatheques.Name = "lstMediatheques";
             lstMediatheques.Size = new Size(120, 94);
             lstMediatheques.TabIndex = 4;
@@ -100,7 +99,7 @@
             // 
             // btnImportSong
             // 
-            btnImportSong.Location = new Point(410, 185);
+            btnImportSong.Location = new Point(590, 201);
             btnImportSong.Name = "btnImportSong";
             btnImportSong.Size = new Size(75, 23);
             btnImportSong.TabIndex = 6;
