@@ -42,5 +42,10 @@ namespace BitRuisseau
         /// The hash of the file content
         /// </summary>
         public string Hash { get; }
+
+        /// <summary>
+        /// The file format of the song
+        /// </summary>
+        public string Extension { get; }
     }
 }

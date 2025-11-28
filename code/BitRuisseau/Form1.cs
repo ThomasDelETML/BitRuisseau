@@ -32,6 +32,8 @@ namespace BitRuisseau
 
             // Implémentation "fake" du protocole, uniquement pour la démo
             _protocol = new FakeProtocol(_localLibrary);
+            // L’instance s’annonce comme médiathèque opérationnelle
+            _protocol.SayOnline();
         }
 
         #region Initialisation UI
@@ -287,6 +289,7 @@ namespace BitRuisseau
 
         private void BtnRefreshMediatheques_Click(object sender, EventArgs e)
         {
+            // DISCOVER : on demande au protocole la liste des médiathèques opérationnelles
             var online = _protocol.GetOnlineMediatheque() ?? new string[0];
             lstMediatheques.DataSource = online;
         }
@@ -368,23 +371,20 @@ namespace BitRuisseau
         public string[] Featuring { get; set; }
         public string Hash { get; private set; }
 
-        // Propriété supplémentaire, non imposée par l’interface
+        // Ajout obligatoire pour implémenter ISong
+        public string Extension { get; private set; }
+
+        // Non imposé par l’interface
         public string FilePath { get; set; }
 
-        // Pour affichage dans le DataGridView
-        public string FeaturingText
-        {
-            get
-            {
-                if (Featuring == null || Featuring.Length == 0)
-                    return string.Empty;
-                return string.Join(", ", Featuring);
-            }
-        }
+        public string FeaturingText =>
+            (Featuring == null || Featuring.Length == 0)
+            ? string.Empty
+            : string.Join(", ", Featuring);
 
         public Song(string filePath)
         {
-            if (filePath == null) throw new ArgumentNullException("filePath");
+            if (filePath == null) throw new ArgumentNullException(nameof(filePath));
 
             FilePath = filePath;
 
@@ -392,10 +392,13 @@ namespace BitRuisseau
             Title = Path.GetFileNameWithoutExtension(filePath);
             Artist = "Inconnu";
             Year = DateTime.Now.Year;
-            Duration = TimeSpan.Zero; // Tu peux utiliser TagLib# si tu veux une vraie durée
+            Duration = TimeSpan.Zero;
             Size = (int)fi.Length;
-            Featuring = new string[0];
+            Featuring = Array.Empty<string>();
             Hash = ComputeHash(filePath);
+
+            // Nouveau : extension du fichier
+            Extension = Path.GetExtension(filePath);
         }
 
         private static string ComputeHash(string filePath)
@@ -408,6 +411,7 @@ namespace BitRuisseau
             }
         }
     }
+
 
     /// <summary>
     /// Médiathèque locale, chargée à partir d’un dossier.
@@ -495,33 +499,41 @@ namespace BitRuisseau
     }
 
     /// <summary>
-    /// Implémentation très simple de IProtocol.
-    /// Tout reste en local, juste pour que l’UI fonctionne.
+    /// Implémentation "fake" de IProtocol avec discover/announce en mémoire.
     /// </summary>
     internal class FakeProtocol : IProtocol
     {
         private readonly LocalMediaLibrary _localLibrary;
+        private readonly string _selfName;
+
+        private static readonly HashSet<string> _onlineMediatheques =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         public FakeProtocol(LocalMediaLibrary localLibrary)
         {
             _localLibrary = localLibrary;
+            _selfName = Environment.MachineName;
         }
 
         public string[] GetOnlineMediatheque()
         {
-            // Pour la démo, on considère qu’il y a toujours UNE médiathèque: "LocalDemo"
-            return new[] { "LocalDemo" };
+            lock (_onlineMediatheques)
+            {
+                return _onlineMediatheques.ToArray();
+            }
         }
 
         public void SayOnline()
         {
-            // Rien à faire dans la version fake
+            lock (_onlineMediatheques)
+            {
+                _onlineMediatheques.Add(_selfName);
+            }
         }
 
         public List<ISong> AskCatalog(string name)
         {
-            // Si on demande "LocalDemo", on renvoie notre catalogue local.
-            if (name == "LocalDemo")
+            if (string.Equals(name, _selfName, StringComparison.OrdinalIgnoreCase))
                 return _localLibrary.Songs.Cast<ISong>().ToList();
 
             return new List<ISong>();
@@ -529,19 +541,20 @@ namespace BitRuisseau
 
         public void SendCatalog(string name)
         {
-            // Non utilisé dans la version fake
+            // Fake : rien à envoyer réellement
         }
 
-        public void AskMedia(string name, int startByte, int endByte)
+        public void AskMedia(ISong song, string name, int startByte, int endByte)
         {
-            // Non utilisé dans la version fake
+            // Fake : pas d’implémentation
         }
 
-        public void SendMedia(string name, int startByte, int endByte)
+        public void SendMedia(ISong song, string name, int startByte, int endByte)
         {
-            // Non utilisé dans la version fake
+            // Fake : pas d’implémentation
         }
     }
+
 
     #endregion
 }
