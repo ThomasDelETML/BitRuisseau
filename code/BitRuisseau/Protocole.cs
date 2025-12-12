@@ -13,11 +13,16 @@ namespace BitRuisseau
         private readonly MqttCommunicator _mqtt;
         private readonly string _selfName;
 
+        // On garde un accès à la médiathèque locale (définie dans MainForm.cs)
+        private readonly LocalMediaLibrary _localLibrary;
+
         private readonly HashSet<string> _online =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        public Protocole()
+        public Protocole(LocalMediaLibrary localLibrary)
         {
+            _localLibrary = localLibrary;
+
             _selfName = Dns.GetHostName();
 
             _mqtt = new MqttCommunicator(
@@ -32,7 +37,6 @@ namespace BitRuisseau
             _mqtt.OnMessageReceived = HandleIncoming;
             _mqtt.Start();
 
-            // Annonce + découverte au démarrage
             SayOnline();
             AskOnline();
         }
@@ -41,7 +45,7 @@ namespace BitRuisseau
         {
             if (msg == null) return;
 
-            // Broadcast ou message pour moi
+            // broadcast ou message pour moi
             if (!string.Equals(msg.Recipient, BroadcastRecipient, StringComparison.OrdinalIgnoreCase) &&
                 !string.Equals(msg.Recipient, _selfName, StringComparison.OrdinalIgnoreCase))
                 return;
@@ -49,7 +53,6 @@ namespace BitRuisseau
             switch (msg.Action)
             {
                 case "askOnline":
-                    // On répond "online" en broadcast
                     SayOnline();
                     break;
 
@@ -60,11 +63,17 @@ namespace BitRuisseau
                     }
                     break;
 
-                // Non implémenté ici
                 case "askCatalog":
+                    // Quelqu'un demande mon catalogue => je l'envoie au sender
+                    if (!string.IsNullOrWhiteSpace(msg.Sender))
+                        SendCatalog(msg.Sender);
+                    break;
+
                 case "sendCatalog":
-                case "askMedia":
-                case "sendMedia":
+                    // Réception du catalogue (tu l'exploiteras ensuite côté UI)
+                    // msg.SongList contient la liste de SongDto.
+                    break;
+
                 default:
                     break;
             }
@@ -72,26 +81,22 @@ namespace BitRuisseau
 
         private void AskOnline()
         {
-            var msg = new Message
+            _mqtt.Send(new Message
             {
                 Recipient = BroadcastRecipient,
                 Sender = _selfName,
                 Action = "askOnline"
-            };
-
-            _mqtt.Send(msg);
+            });
         }
 
         public void SayOnline()
         {
-            var msg = new Message
+            _mqtt.Send(new Message
             {
                 Recipient = BroadcastRecipient,
                 Sender = _selfName,
                 Action = "online"
-            };
-
-            _mqtt.Send(msg);
+            });
         }
 
         public string[] GetOnlineMediatheque()
@@ -104,10 +109,57 @@ namespace BitRuisseau
             }
         }
 
-        public List<ISong> AskCatalog(string name) => throw new NotImplementedException();
-        public void SendCatalog(string name) => throw new NotImplementedException();
-        public void AskMedia(ISong song, string name, int startByte, int endByte) => throw new NotImplementedException();
-        public void SendMedia(ISong song, string name, int startByte, int endByte) => throw new NotImplementedException();
+        public List<ISong> AskCatalog(string name)
+        {
+            // Envoi uniquement (la réception/attente sera faite après si tu veux)
+            _mqtt.Send(new Message
+            {
+                Recipient = name,      // destinataire précis
+                Sender = _selfName,
+                Action = "askCatalog"
+            });
+
+            return new List<ISong>();
+        }
+
+        public void SendCatalog(string name)
+        {
+            // Construit un catalogue sérialisable
+            var catalog = (_localLibrary.Songs ?? new List<Song>())
+                .Select(s => new SongDto
+                {
+                    Path = s.FilePath ?? "",          // "Path" comme dans ton exemple
+                    Title = s.Title ?? "",
+                    Artist = s.Artist ?? "",
+                    Year = s.Year,
+                    Size = s.Size,
+                    Featuring = s.Featuring ?? Array.Empty<string>(),
+                    Hash = s.Hash ?? "",
+                    Duration = s.Duration,
+                    Extension = s.Extension ?? ""
+                })
+                .ToList();
+
+            var msg = new Message
+            {
+                Recipient = name,        // ex: "INF-B21-M209"
+                Sender = _selfName,      // hostname (comme ton message online)
+                Action = "sendCatalog",
+                SongList = catalog,
+                StartByte = null,
+                EndByte = null,
+                SongData = null,
+                Hash = null
+            };
+
+            _mqtt.Send(msg);
+        }
+
+        public void AskMedia(ISong song, string name, int startByte, int endByte)
+            => throw new NotImplementedException();
+
+        public void SendMedia(ISong song, string name, int startByte, int endByte)
+            => throw new NotImplementedException();
 
         public void Dispose() => _mqtt.Dispose();
     }

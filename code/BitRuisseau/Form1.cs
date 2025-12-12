@@ -32,7 +32,8 @@ namespace BitRuisseau
 
             //_protocol = new Protocole();
             //_protocol.SayOnline();
-            _protocol = new Protocole();
+            _protocol = new Protocole(_localLibrary);
+
         }
 
         #region Initialisation UI

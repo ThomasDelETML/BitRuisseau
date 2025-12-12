@@ -1,53 +1,35 @@
 ﻿using System;
-using System.Buffers.Text;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Text.Json.Serialization;
-using System.Threading.Tasks;
 
 namespace BitRuisseau
 {
+    // DTO sérialisable (pas d'interface)
+    public class SongDto
+    {
+        public string Path { get; set; } = "";
+        public string Title { get; set; } = "";
+        public string Artist { get; set; } = "";
+        public int Year { get; set; }
+        public int Size { get; set; }
+        public string[] Featuring { get; set; } = Array.Empty<string>();
+        public string Hash { get; set; } = "";
+        public TimeSpan Duration { get; set; }
+        public string Extension { get; set; } = "";
+    }
+
     public class Message
     {
-        /// <summary>
-        /// The message recipient
-        /// </summary>
-        public string Recipient { get; set; }
+        public string Recipient { get; set; } = "";
+        public string Sender { get; set; } = "";
+        public string Action { get; set; } = "";
 
-        /// <summary>
-        /// The message sender
-        /// </summary>
-        public string Sender { get; set; }
+        public int? StartByte { get; set; }
+        public int? EndByte { get; set; }
 
-        /// <summary>
-        /// What this message is for
-        /// </summary>
-        public string Action { get; set; }
+        // IMPORTANT: on remplace List<ISong> par List<SongDto>
+        public List<SongDto>? SongList { get; set; }
 
-        /// <summary>
-        /// The starting byte
-        /// </summary>
-        public int ?StartByte { get; set; }
-
-        /// <summary>
-        /// The ending Byte
-        /// </summary>
-        public int ?EndByte { get; set; }
-
-        /// <summary>
-        /// The list of song metadata
-        /// </summary>
-        public List<ISong> ?SongList { get; set; }
-
-        /// <summary>
-        /// The base64 encoded byte array of the audio file
-        /// </summary>
-        public string ?SongData { get; set; }
-
-        /// <summary>
-        /// The hash of the file asked/sent
-        /// </summary>
-        public string ?Hash { get; set; }
+        public string? SongData { get; set; }
+        public string? Hash { get; set; }
     }
 }
