@@ -32,7 +32,7 @@ namespace BitRuisseau
 
             //_protocol = new Protocole();
             //_protocol.SayOnline();
-            _protocol = new Protocole(_localLibrary);
+            _protocol = new Protocole(_localLibrary, username: "ict", password: "321");
 
         }
 
@@ -303,12 +303,12 @@ namespace BitRuisseau
             // Récupération du catalogue distant
             var songs = _protocol.AskCatalog(name) ?? new List<ISong>();
 
-            // On garde uniquement les implémentations Song pour l’affichage
+            // RemoteSong = objet distant sérialisé, pas Song (local)
             var casted = songs
-                .OfType<Song>()
+                .OfType<RemoteSong>()
                 .ToList();
 
-            _remoteSongsBinding = new BindingList<Song>(casted);
+            _remoteSongsBinding = new BindingList<RemoteSong>(casted);
             dgvRemoteSongs.DataSource = _remoteSongsBinding;
         }
 
