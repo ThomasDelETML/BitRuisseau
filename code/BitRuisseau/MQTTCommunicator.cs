@@ -1,129 +1,153 @@
-﻿using System;
+﻿using MQTTnet;
+using MQTTnet.Protocol;
+using System;
+using System.Buffers;
 using System.Net;
 using System.Text;
 using System.Text.Json;
-using System.Threading;
-using MQTTnet;
-using MQTTnet.Client;
-using MQTTnet.Client.Options;
-using MQTTnet.Protocol;
+using System.Threading.Tasks;
 
 namespace BitRuisseau
 {
-    /// <summary>
-    /// Wrapper MQTT simple pour envoyer/recevoir des Message (JSON) sur un topic.
-    /// </summary>
     public class MqttCommunicator : IDisposable
     {
         private const int DefaultPort = 1883;
+        private const string DefaultTopic = "BitRuisseau";
 
         private readonly string _brokerHost;
         private readonly int _brokerPort;
         private readonly string _nodeId;
         private readonly string _topic;
+        private readonly string? _username;
+        private readonly string? _password;
 
         private readonly MqttClientFactory _factory = new();
-        private IMqttClient _mqttClient;
+        private readonly IMqttClient _mqttClient;
 
         public Action<Message>? OnMessageReceived { get; set; }
 
-        public MqttCommunicator(string brokerHost,
-                                string? nodeId = null,
-                                string? topic = null,
-                                int brokerPort = DefaultPort)
+        // Overload compatible avec new MqttCommunicator("host", "T")
+        public MqttCommunicator(string brokerHost, string nodeId)
+            : this(brokerHost, nodeId, DefaultTopic, DefaultPort, null, null)
+        {
+        }
+
+        public MqttCommunicator(
+            string brokerHost,
+            string nodeId,
+            string topic,
+            int brokerPort = DefaultPort,
+            string? username = null,
+            string? password = null)
         {
             _brokerHost = brokerHost;
             _brokerPort = brokerPort;
-            _nodeId = nodeId ?? Dns.GetHostName();
-            _topic = topic ?? Config.TOPIC;
+            _nodeId = string.IsNullOrWhiteSpace(nodeId) ? Dns.GetHostName() : nodeId;
+            _topic = string.IsNullOrWhiteSpace(topic) ? DefaultTopic : topic;
+
+            _username = username;
+            _password = password;
 
             _mqttClient = _factory.CreateMqttClient();
         }
 
-        /// <summary>
-        /// Démarre la connexion MQTT et la souscription au topic.
-        /// </summary>
         public void Start()
         {
-            // Contexte de synchro éventuellement utile si on veut remonter les erreurs au thread UI
-            var syncContext = SynchronizationContext.Current;
-
-            _mqttClient.ApplicationMessageReceivedAsync += async e =>
+            _mqttClient.ApplicationMessageReceivedAsync += e =>
             {
-                var payload = Encoding.UTF8.GetString(e.ApplicationMessage.PayloadSegment);
-
                 try
                 {
-                    var msg = JsonSerializer.Deserialize<Message>(payload);
+                    var payload = e.ApplicationMessage.Payload; // ReadOnlySequence<byte> (MQTTnet 4.x)
+
+                    if (payload.IsEmpty)
+                        return Task.CompletedTask;
+
+                    var json = Encoding.UTF8.GetString(payload.ToArray());
+                    var msg = JsonSerializer.Deserialize<Message>(json);
+
                     if (msg != null)
-                    {
                         OnMessageReceived?.Invoke(msg);
-                    }
                 }
                 catch
                 {
-                    // On ignore les messages invalides
+                    // ignore
                 }
 
-                await Task.CompletedTask;
+                return Task.CompletedTask;
             };
 
             Connect();
 
             var subscribeOptions = _factory
                 .CreateSubscribeOptionsBuilder()
-                .WithTopicFilter(_topic,
-                    MqttQualityOfServiceLevel.AtLeastOnce,
-                    retainAsPublished: false,
-                    retainHandling: MqttRetainHandling.SendAtSubscribe)
+                .WithTopicFilter(_topic, MqttQualityOfServiceLevel.AtLeastOnce)
                 .Build();
 
-            var subscriptionResult = _mqttClient.SubscribeAsync(subscribeOptions).Result;
-            if (subscriptionResult.Items.Count <= 0)
-            {
-                throw new InvalidOperationException("Failed to subscribe to the MQTT topic.");
-            }
+            var subResult = _mqttClient.SubscribeAsync(subscribeOptions)
+                                      .GetAwaiter()
+                                      .GetResult();
+
+            if (subResult.Items.Count == 0)
+                throw new InvalidOperationException("Failed to subscribe to MQTT topic.");
         }
 
         private void Connect()
         {
-            var options = new MqttClientOptionsBuilder()
-                .WithClientId(_nodeId)
-                .WithTcpServer(_brokerHost, _brokerPort)
-                .Build();
+            try
+            {
+                var builder = new MqttClientOptionsBuilder()
+                    .WithClientId(_nodeId)
+                    .WithTcpServer(_brokerHost, _brokerPort)
+                    .WithCleanSession();
 
-            var connectResult = _mqttClient.ConnectAsync(options).Result;
-            if (connectResult.ResultCode != MqttClientConnectResultCode.Success)
+                if (!string.IsNullOrEmpty(_username))
+                {
+                    // IMPORTANT: certains brokers n'aiment pas password = null
+                    builder = builder.WithCredentials(_username, _password ?? string.Empty);
+                }
+
+                var options = builder.Build();
+
+                var result = _mqttClient.ConnectAsync(options)
+                                        .GetAwaiter()
+                                        .GetResult();
+
+                if (result.ResultCode != MqttClientConnectResultCode.Success)
+                {
+                    throw new InvalidOperationException(
+                        $"MQTT connect failed. ResultCode={result.ResultCode}, Reason='{result.ReasonString}'");
+                }
+            }
+            catch (Exception ex)
             {
                 throw new InvalidOperationException(
-                    $"Failed to connect to the MQTT broker. Reason: {connectResult.ReasonString}");
+                    $"MQTT connect exception to {_brokerHost}:{_brokerPort} clientId='{_nodeId}': {ex.Message}",
+                    ex);
             }
         }
 
-        /// <summary>
-        /// Envoie un Message sur le topic (en JSON).
-        /// </summary>
         public void Send(Message msg)
         {
             if (!_mqttClient.IsConnected)
-            {
                 Connect();
-            }
 
-            var payload = JsonSerializer.Serialize(msg);
+            var json = JsonSerializer.Serialize(msg);
 
             var appMessage = new MqttApplicationMessageBuilder()
                 .WithTopic(_topic)
-                .WithRetainFlag(false)
+                .WithPayload(json)
                 .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce)
-                .WithPayload(payload)
+                .WithRetainFlag(false)
                 .Build();
 
-            var publishResult = _mqttClient.PublishAsync(appMessage).Result;
-            if (!publishResult.IsSuccess)
+            var pub = _mqttClient.PublishAsync(appMessage)
+                                 .GetAwaiter()
+                                 .GetResult();
+
+            if (!pub.IsSuccess)
             {
                 throw new InvalidOperationException(
-                    $"Failed to publish MQTT message. Reason: {publishResult.ReasonString}");
+                    $"Failed to publish MQTT message. Reason='{pub.ReasonString}'");
             }
         }
 
@@ -131,7 +155,8 @@ namespace BitRuisseau
         {
             try
             {
-                _mqttClient.DisconnectAsync().Wait(1000);
+                if (_mqttClient.IsConnected)
+                    _mqttClient.DisconnectAsync().GetAwaiter().GetResult();
             }
             catch
             {

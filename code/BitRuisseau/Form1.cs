@@ -30,10 +30,9 @@ namespace BitRuisseau
             InitializeRemoteGrid();
             HookEvents();
 
-            // Implémentation "fake" du protocole, uniquement pour la démo
-            _protocol = new FakeProtocol(_localLibrary);
-            // L’instance s’annonce comme médiathèque opérationnelle
-            _protocol.SayOnline();
+            //_protocol = new Protocole();
+            //_protocol.SayOnline();
+            _protocol = new Protocole();
         }
 
         #region Initialisation UI
