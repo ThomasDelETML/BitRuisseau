@@ -31,5 +31,8 @@ namespace BitRuisseau
 
         public string? SongData { get; set; }
         public string? Hash { get; set; }
+
+        // Ultra bete test
+        public string? RequestId { get; set; }
     }
 }

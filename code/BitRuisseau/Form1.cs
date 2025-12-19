@@ -315,21 +315,62 @@ namespace BitRuisseau
             dgvRemoteSongs.DataSource = _remoteSongsBinding;
         }
 
-        private void BtnImportSong_Click(object sender, EventArgs e)
+        private async void BtnImportSong_Click(object sender, EventArgs e)
+{
+    if (dgvRemoteSongs.CurrentRow == null)
+        return;
+
+    var remote = dgvRemoteSongs.CurrentRow.DataBoundItem as RemoteSong;
+    if (remote == null)
+        return;
+
+    var remoteHost = lstMediatheques.SelectedItem as string;
+    if (string.IsNullOrWhiteSpace(remoteHost))
+    {
+        MessageBox.Show("Sélectionne une médiathèque distante.");
+        return;
+    }
+
+    if (string.IsNullOrWhiteSpace(_localLibrary.RootFolder) || !Directory.Exists(_localLibrary.RootFolder))
+    {
+        MessageBox.Show("Sélectionne un dossier local.");
+        return;
+    }
+
+    if (!(_protocol is Protocole p))
+    {
+        MessageBox.Show("Protocole incompatible.");
+        return;
+    }
+
+    btnImportSong.Enabled = false;
+    try
+    {
+        var progress = new Progress<int>(pct =>
         {
-            if (dgvRemoteSongs.CurrentRow == null)
-                return;
+            btnImportSong.Text = $"Importer ({pct}%)";
+        });
 
-            var remote = dgvRemoteSongs.CurrentRow.DataBoundItem as RemoteSong;
-            if (remote == null)
-                return;
+        var path = await p.ImportRemoteSongAsync(remote, remoteHost, _localLibrary.RootFolder, progress);
 
-            MessageBox.Show(
-                "Import non implémenté.\n\nJ'ai pas encore fait :(",
-                "Importer",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Information);
-        }
+        // recharge bibliothèque locale
+        _localLibrary.SetFolder(_localLibrary.RootFolder);
+        _allLocalSongs = _localLibrary.Songs.ToList();
+        ApplyLocalFilterAndSort();
+
+        MessageBox.Show("Import OK:\n" + path);
+    }
+    catch (Exception ex)
+    {
+        MessageBox.Show("Erreur import:\n" + ex.Message);
+    }
+    finally
+    {
+        btnImportSong.Text = "Importer";
+        btnImportSong.Enabled = true;
+    }
+}
+
 
 
         #endregion
