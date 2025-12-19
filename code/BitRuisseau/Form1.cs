@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Windows.Forms;
+
 //
 namespace BitRuisseau
 {
@@ -49,14 +51,14 @@ namespace BitRuisseau
 
             dgvLocalSongs.Columns.Add(new DataGridViewTextBoxColumn
             {
-                DataPropertyName = nameof(RemoteSong.Artist),
+                DataPropertyName = nameof(Song.Title),
                 HeaderText = "Titre",
                 Width = 150,
                 SortMode = DataGridViewColumnSortMode.Programmatic
             });
             dgvLocalSongs.Columns.Add(new DataGridViewTextBoxColumn
             {
-                DataPropertyName = nameof(RemoteSong.Artist),
+                DataPropertyName = nameof(Song.Artist),
                 HeaderText = "Artiste",
                 Width = 120,
                 SortMode = DataGridViewColumnSortMode.Programmatic
@@ -368,15 +370,53 @@ namespace BitRuisseau
             var fi = new FileInfo(filePath);
             Title = Path.GetFileNameWithoutExtension(filePath);
             Artist = "Inconnu";
-            Year = DateTime.Now.Year;
+            Year = 0;
             Duration = TimeSpan.Zero;
             Size = (int)fi.Length;
             Featuring = Array.Empty<string>();
-            Hash = ComputeHash(filePath);
 
-            // Nouveau : extension du fichier
             Extension = Path.GetExtension(filePath);
+
+            // Metadonnées (mp3/wav/flac/ogg…)
+            TryReadTags(filePath);
+
+            // Hash (peut rester après, pas lié aux tags)
+            Hash = ComputeHash(filePath);
         }
+
+        private void TryReadTags(string filePath)
+        {
+            try
+            {
+                var f = TagLib.File.Create(filePath);
+
+                // Titre
+                if (!string.IsNullOrWhiteSpace(f.Tag.Title))
+                    Title = f.Tag.Title;
+
+                // Artiste
+                var performers = f.Tag.Performers;
+                if (performers != null && performers.Length > 0 && !string.IsNullOrWhiteSpace(performers[0]))
+                    Artist = performers[0];
+
+                // Year
+                if (f.Tag.Year > 0)
+                    Year = (int)f.Tag.Year;
+
+                // Duration
+                if (f.Properties != null)
+                    Duration = f.Properties.Duration;
+
+                // Featuring (tous les artistes sauf le premier)
+                if (performers != null && performers.Length > 1)
+                    Featuring = performers.Skip(1).Where(x => !string.IsNullOrWhiteSpace(x)).ToArray();
+            }
+            catch
+            {
+                // Si TagLib n'arrive pas à lire (fichier corrompu, format non supporté), on garde les valeurs par défaut
+            }
+        }
+
 
         private static string ComputeHash(string filePath)
         {
@@ -465,14 +505,32 @@ namespace BitRuisseau
                 return;
             }
 
-            var extensions = new[] { ".mp3", ".wav", ".flac", ".ogg" };
+            var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ".mp3", ".wav", ".flac", ".ogg"
+    };
 
-            Songs = Directory
-                .EnumerateFiles(RootFolder, "*.*", SearchOption.AllDirectories)
-                .Where(f => extensions.Contains(Path.GetExtension(f).ToLower()))
-                .Select(path => new Song(path)) // LINQ
-                .ToList();
+            var list = new List<Song>();
+
+            foreach (var path in Directory.EnumerateFiles(RootFolder, "*.*", SearchOption.AllDirectories))
+            {
+                try
+                {
+                    var ext = Path.GetExtension(path).ToLowerInvariant();
+                    if (!allowed.Contains(ext))
+                        continue;
+
+                    list.Add(new Song(path));
+                }
+                catch
+                {
+                    // On ignore le fichier qui pose problème (accès refusé, fichier corrompu, etc.)
+                }
+            }
+
+            Songs = list;
         }
+
     }
 
     /// <summary>
