@@ -272,7 +272,6 @@ namespace BitRuisseau
         {
             if (string.IsNullOrWhiteSpace(msg.Sender) ||
                 string.IsNullOrWhiteSpace(msg.Hash) ||
-                string.IsNullOrWhiteSpace(msg.RequestId) ||
                 msg.StartByte == null ||
                 msg.EndByte == null)
                 return;
