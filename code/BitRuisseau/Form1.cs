@@ -13,7 +13,7 @@ namespace BitRuisseau
         private readonly IProtocol _protocol;
 
         private BindingList<Song> _localSongsBinding = new BindingList<Song>();
-        private BindingList<Song> _remoteSongsBinding = new BindingList<Song>();
+        private BindingList<RemoteSong> _remoteSongsBinding = new BindingList<RemoteSong>();
 
         // Liste complète (avant filtre/tri)
         private List<Song> _allLocalSongs = new List<Song>();
@@ -49,14 +49,14 @@ namespace BitRuisseau
 
             dgvLocalSongs.Columns.Add(new DataGridViewTextBoxColumn
             {
-                DataPropertyName = nameof(Song.Title),
+                DataPropertyName = nameof(RemoteSong.Artist),
                 HeaderText = "Titre",
                 Width = 150,
                 SortMode = DataGridViewColumnSortMode.Programmatic
             });
             dgvLocalSongs.Columns.Add(new DataGridViewTextBoxColumn
             {
-                DataPropertyName = nameof(Song.Artist),
+                DataPropertyName = nameof(RemoteSong.Artist),
                 HeaderText = "Artiste",
                 Width = 120,
                 SortMode = DataGridViewColumnSortMode.Programmatic
@@ -105,20 +105,21 @@ namespace BitRuisseau
 
             dgvRemoteSongs.Columns.Add(new DataGridViewTextBoxColumn
             {
-                DataPropertyName = nameof(Song.Title),
+                DataPropertyName = nameof(RemoteSong.Title),
                 HeaderText = "Titre",
                 Width = 150
             });
             dgvRemoteSongs.Columns.Add(new DataGridViewTextBoxColumn
             {
-                DataPropertyName = nameof(Song.Artist),
+                DataPropertyName = nameof(RemoteSong.Artist),
                 HeaderText = "Artiste",
                 Width = 120
             });
 
-            _remoteSongsBinding = new BindingList<Song>();
+            _remoteSongsBinding = new BindingList<RemoteSong>();
             dgvRemoteSongs.DataSource = _remoteSongsBinding;
         }
+
 
         private void HookEvents()
         {
@@ -317,41 +318,17 @@ namespace BitRuisseau
             if (dgvRemoteSongs.CurrentRow == null)
                 return;
 
-            var current = dgvRemoteSongs.CurrentRow.DataBoundItem as Song;
-            if (current == null)
+            var remote = dgvRemoteSongs.CurrentRow.DataBoundItem as RemoteSong;
+            if (remote == null)
                 return;
 
-            var remoteSong = current;
-
-            if (string.IsNullOrWhiteSpace(_localLibrary.RootFolder))
-            {
-                MessageBox.Show("Aucun dossier local configuré.");
-                return;
-            }
-
-            if (string.IsNullOrWhiteSpace(remoteSong.FilePath) || !File.Exists(remoteSong.FilePath))
-            {
-                MessageBox.Show("Ce morceau n’a pas de fichier associé.");
-                return;
-            }
-
-            var extension = Path.GetExtension(remoteSong.FilePath);
-            var destPath = Path.Combine(
-                _localLibrary.RootFolder,
-                string.Format("{0}{1}", remoteSong.Title, extension)
-            );
-
-            // Si le fichier existe déjà, on ne recopie pas
-            if (!File.Exists(destPath))
-            {
-                File.Copy(remoteSong.FilePath, destPath, false);
-            }
-
-            // Recharge la médiathèque locale
-            _localLibrary.SetFolder(_localLibrary.RootFolder);
-            _allLocalSongs = _localLibrary.Songs.ToList();
-            ApplyLocalFilterAndSort();
+            MessageBox.Show(
+                "Import non implémenté.\n\nJ'ai pas encore fait :(",
+                "Importer",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
         }
+
 
         #endregion
     }
