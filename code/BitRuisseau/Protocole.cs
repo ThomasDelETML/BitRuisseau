@@ -21,6 +21,7 @@ namespace BitRuisseau
         public TimeSpan Duration { get; set; }
         public int Size { get; set; }
         public string[] Featuring { get; set; } = Array.Empty<string>();
+
         public string Hash { get; private set; } = "";
         public string Extension { get; private set; } = "";
 
@@ -45,12 +46,14 @@ namespace BitRuisseau
         private const string Topic = "BitRuisseau";
         private const string BroadcastRecipient = "0.0.0.0";
 
-        // MQTT payloads: rester raisonnable => chunk 24KB (base64 grossit ~33%)
-        private const int ChunkBytes = 24 * 1024;
+        // IMPORTANT: plus petit => moins de risques de limite broker/payload
+        private const int ChunkBytes = 8 * 1024; // 8KB
 
         private readonly MqttCommunicator _mqtt;
         private readonly string _selfName;
         private readonly LocalMediaLibrary _localLibrary;
+
+        private readonly object _lock = new object();
 
         private readonly HashSet<string> _online =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -61,9 +64,7 @@ namespace BitRuisseau
         private readonly Dictionary<string, ManualResetEventSlim> _catalogWaiters =
             new Dictionary<string, ManualResetEventSlim>(StringComparer.OrdinalIgnoreCase);
 
-        private readonly object _lock = new object();
-
-        // RequestId -> TCS qui reçoit un chunk (sendMedia)
+        // On corrèle les chunks via (sender + hash + startByte), pas via RequestId
         private readonly ConcurrentDictionary<string, TaskCompletionSource<Message>> _pendingMedia =
             new ConcurrentDictionary<string, TaskCompletionSource<Message>>(StringComparer.OrdinalIgnoreCase);
 
@@ -119,12 +120,10 @@ namespace BitRuisseau
                     break;
 
                 case "askMedia":
-                    // quelqu’un me demande un chunk
                     HandleAskMedia(msg);
                     break;
 
                 case "sendMedia":
-                    // je reçois un chunk
                     HandleSendMedia(msg);
                     break;
             }
@@ -160,7 +159,7 @@ namespace BitRuisseau
             }
         }
 
-        // ---------- CATALOG ----------
+        // ---------------- CATALOG ----------------
 
         private void ReceiveCatalog(string sender, List<SongDto>? list)
         {
@@ -168,14 +167,12 @@ namespace BitRuisseau
                 .Select(dto => new RemoteSong(dto))
                 .ToList();
 
-            ManualResetEventSlim? waiter = null;
-
+            ManualResetEventSlim? waiter;
             lock (_lock)
             {
                 _catalogs[sender] = converted;
                 _catalogWaiters.TryGetValue(sender, out waiter);
             }
-
             waiter?.Set();
         }
 
@@ -245,11 +242,10 @@ namespace BitRuisseau
             });
         }
 
-        // ---------- MEDIA (import) ----------
+        // ---------------- MEDIA (import) ----------------
 
         public void AskMedia(ISong song, string name, int startByte, int endByte)
         {
-            // requis par IProtocol, mais l’import “propre” passe par AskMediaAsync
             _mqtt.Send(new Message
             {
                 Recipient = name,
@@ -258,18 +254,16 @@ namespace BitRuisseau
                 StartByte = startByte,
                 EndByte = endByte,
                 Hash = song.Hash,
-                RequestId = Guid.NewGuid().ToString("N")
+                RequestId = Guid.NewGuid().ToString("N") // optionnel
             });
         }
 
         public void SendMedia(ISong song, string name, int startByte, int endByte)
-        {
-            // requis par IProtocol, mais en pratique on répond via HandleAskMedia
-            throw new NotImplementedException();
-        }
+            => throw new NotImplementedException("Réponse gérée par HandleAskMedia().");
 
         private void HandleAskMedia(Message msg)
         {
+            // IMPORTANT: ne PAS exiger RequestId, sinon compat cassée avec d'autres postes
             if (string.IsNullOrWhiteSpace(msg.Sender) ||
                 string.IsNullOrWhiteSpace(msg.Hash) ||
                 msg.StartByte == null ||
@@ -292,13 +286,15 @@ namespace BitRuisseau
             if (end < start) return;
 
             int count = end - start + 1;
-            var buffer = new byte[count];
 
             try
             {
+                var buffer = new byte[count];
+
                 using (var fs = new FileStream(local.FilePath, FileMode.Open, FileAccess.Read, FileShare.Read))
                 {
                     fs.Position = start;
+
                     int read = 0;
                     while (read < count)
                     {
@@ -316,8 +312,6 @@ namespace BitRuisseau
                     }
                 }
 
-                var base64 = Convert.ToBase64String(buffer);
-
                 _mqtt.Send(new Message
                 {
                     Recipient = msg.Sender,
@@ -326,7 +320,9 @@ namespace BitRuisseau
                     StartByte = start,
                     EndByte = end,
                     Hash = msg.Hash,
-                    SongData = base64,
+                    SongData = Convert.ToBase64String(buffer),
+
+                    // on renvoie si présent, sinon null (ok)
                     RequestId = msg.RequestId
                 });
             }
@@ -336,24 +332,29 @@ namespace BitRuisseau
             }
         }
 
+        private static string PendingKey(string sender, string hash, int startByte)
+            => $"{sender}::{NormalizeHash(hash)}::{startByte}";
+
         private void HandleSendMedia(Message msg)
         {
-            if (string.IsNullOrWhiteSpace(msg.RequestId))
+            if (string.IsNullOrWhiteSpace(msg.Sender) ||
+                string.IsNullOrWhiteSpace(msg.Hash) ||
+                msg.StartByte == null)
                 return;
 
-            if (_pendingMedia.TryRemove(msg.RequestId, out var tcs))
-            {
+            var key = PendingKey(msg.Sender, msg.Hash, msg.StartByte.Value);
+
+            if (_pendingMedia.TryRemove(key, out var tcs))
                 tcs.TrySetResult(msg);
-            }
         }
 
         private async Task<Message> AskMediaAsync(string remoteHost, string hash, int start, int end, CancellationToken ct)
         {
-            var requestId = Guid.NewGuid().ToString("N");
-            var tcs = new TaskCompletionSource<Message>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var key = PendingKey(remoteHost, hash, start);
 
-            if (!_pendingMedia.TryAdd(requestId, tcs))
-                throw new InvalidOperationException("Impossible de créer la requête askMedia.");
+            var tcs = new TaskCompletionSource<Message>(TaskCreationOptions.RunContinuationsAsynchronously);
+            if (!_pendingMedia.TryAdd(key, tcs))
+                throw new InvalidOperationException("Chunk déjà en cours.");
 
             _mqtt.Send(new Message
             {
@@ -363,21 +364,21 @@ namespace BitRuisseau
                 StartByte = start,
                 EndByte = end,
                 Hash = hash,
-                RequestId = requestId
+
+                RequestId = Guid.NewGuid().ToString("N")
             });
 
             using var reg = ct.Register(() =>
             {
-                if (_pendingMedia.TryRemove(requestId, out var t))
+                if (_pendingMedia.TryRemove(key, out var t))
                     t.TrySetCanceled(ct);
             });
 
-            // timeout simple
-            var completed = await Task.WhenAny(tcs.Task, Task.Delay(TimeSpan.FromSeconds(5), ct));
+            var completed = await Task.WhenAny(tcs.Task, Task.Delay(TimeSpan.FromSeconds(10), ct));
             if (completed != tcs.Task)
             {
-                _pendingMedia.TryRemove(requestId, out _);
-                throw new TimeoutException("Timeout: sendMedia non reçu.");
+                _pendingMedia.TryRemove(key, out _);
+                throw new TimeoutException("Timeout: SendMedia non reçu.");
             }
 
             return await tcs.Task;
@@ -398,8 +399,15 @@ namespace BitRuisseau
             if (string.IsNullOrWhiteSpace(remoteSong.Hash)) throw new InvalidOperationException("Hash manquant.");
 
             var safeTitle = string.Join("_", (remoteSong.Title ?? "song").Split(Path.GetInvalidFileNameChars()));
-            var ext = string.IsNullOrWhiteSpace(remoteSong.Extension) ? ".bin" : remoteSong.Extension;
-            var finalPath = Path.Combine(destFolder, safeTitle + ext);
+            if (string.IsNullOrWhiteSpace(safeTitle)) safeTitle = "song";
+
+            var ext = string.IsNullOrWhiteSpace(remoteSong.Extension) ? ".bin" : remoteSong.Extension.Trim();
+            if (!ext.StartsWith(".")) ext = "." + ext;
+
+            var h = NormalizeHash(remoteSong.Hash);
+            var suffix = h.Length >= 8 ? h.Substring(0, 8) : "unknown";
+
+            var finalPath = Path.Combine(destFolder, $"{safeTitle}_{suffix}{ext}");
             var tempPath = finalPath + ".part";
 
             if (File.Exists(finalPath))
@@ -408,54 +416,43 @@ namespace BitRuisseau
             int downloaded = 0;
             progress?.Report(0);
 
-            try
+            // IMPORTANT: si ça échoue on garde le .part
+            using (var fs = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None))
             {
-                using (var fs = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None))
+                while (downloaded < remoteSong.Size)
                 {
-                    while (downloaded < remoteSong.Size)
-                    {
-                        ct.ThrowIfCancellationRequested();
+                    ct.ThrowIfCancellationRequested();
 
-                        int start = downloaded;
-                        int end = Math.Min(start + ChunkBytes - 1, remoteSong.Size - 1);
+                    int start = downloaded;
+                    int end = Math.Min(start + ChunkBytes - 1, remoteSong.Size - 1);
 
-                        var msg = await AskMediaAsync(remoteHost, remoteSong.Hash, start, end, ct);
+                    var msg = await AskMediaAsync(remoteHost, remoteSong.Hash, start, end, ct);
 
-                        // validation
-                        if (msg.StartByte != start)
-                            throw new InvalidOperationException("Chunk hors séquence.");
-                        if (string.IsNullOrWhiteSpace(msg.SongData))
-                            throw new InvalidOperationException("Chunk vide.");
+                    if (msg.StartByte != start)
+                        throw new InvalidOperationException("Chunk hors séquence.");
 
-                        var bytes = Convert.FromBase64String(msg.SongData);
+                    if (string.IsNullOrWhiteSpace(msg.SongData))
+                        throw new InvalidOperationException("Chunk vide.");
 
-                        await fs.WriteAsync(bytes, 0, bytes.Length, ct);
-                        downloaded += bytes.Length;
+                    var bytes = Convert.FromBase64String(msg.SongData);
 
-                        int pct = (int)Math.Round(downloaded * 100.0 / remoteSong.Size);
-                        if (pct > 100) pct = 100;
-                        progress?.Report(pct);
-                    }
-                }
+                    await fs.WriteAsync(bytes, 0, bytes.Length, ct);
+                    downloaded += bytes.Length;
 
-                // vérif hash (important pour garantir “écouter même si elle s’arrête”)
-                var computed = NormalizeHash(ComputeSha256Hex(tempPath));
-                var expected = NormalizeHash(remoteSong.Hash);
-
-                if (!string.Equals(computed, expected, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidOperationException("SHA256 invalide après import.");
-
-                File.Move(tempPath, finalPath);
-                progress?.Report(100);
-                return finalPath;
-            }
-            finally
-            {
-                if (File.Exists(tempPath))
-                {
-                    try { File.Delete(tempPath); } catch { }
+                    int pct = (int)Math.Round(downloaded * 100.0 / remoteSong.Size);
+                    if (pct > 100) pct = 100;
+                    progress?.Report(pct);
                 }
             }
+            var computed = NormalizeHash(ComputeSha256Hex(tempPath));
+            var expected = NormalizeHash(remoteSong.Hash);
+
+            if (!string.Equals(computed, expected, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("SHA256 invalide après import.");
+
+            File.Move(tempPath, finalPath);
+            progress?.Report(100);
+            return finalPath;
         }
 
         private static string ComputeSha256Hex(string filePath)
@@ -464,7 +461,7 @@ namespace BitRuisseau
             using var sha = SHA256.Create();
             var hash = sha.ComputeHash(stream);
             var sb = new StringBuilder(hash.Length * 2);
-            foreach (var b in hash) sb.Append(b.ToString("X2")); // majuscules
+            foreach (var b in hash) sb.Append(b.ToString("X2"));
             return sb.ToString();
         }
 

@@ -26,7 +26,6 @@ namespace BitRuisseau
 
         public Action<Message>? OnMessageReceived { get; set; }
 
-        // Overload compatible avec new MqttCommunicator("host", "T")
         public MqttCommunicator(string brokerHost, string nodeId)
             : this(brokerHost, nodeId, DefaultTopic, DefaultPort, null, null)
         {
@@ -102,7 +101,6 @@ namespace BitRuisseau
 
                 if (!string.IsNullOrEmpty(_username))
                 {
-                    // IMPORTANT: certains brokers n'aiment pas password = null
                     builder = builder.WithCredentials(_username, _password ?? string.Empty);
                 }
 

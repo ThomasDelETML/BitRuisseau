@@ -6,7 +6,6 @@ using System.IO;
 using System.Linq;
 using System.Windows.Forms;
 
-//
 namespace BitRuisseau
 {
     public partial class MainForm : Form
@@ -17,10 +16,8 @@ namespace BitRuisseau
         private BindingList<Song> _localSongsBinding = new BindingList<Song>();
         private BindingList<RemoteSong> _remoteSongsBinding = new BindingList<RemoteSong>();
 
-        // Liste complète (avant filtre/tri)
         private List<Song> _allLocalSongs = new List<Song>();
 
-        // État du tri
         private string _currentSortColumn = nameof(Song.Title);
         private bool _currentSortAscending = true;
 
@@ -32,8 +29,6 @@ namespace BitRuisseau
             InitializeRemoteGrid();
             HookEvents();
 
-            //_protocol = new Protocole();
-            //_protocol.SayOnline();
             _protocol = new Protocole(_localLibrary, username: "ict", password: "321");
 
         }
@@ -200,8 +195,6 @@ namespace BitRuisseau
             }
 
             ApplyLocalFilterAndSort();
-
-            // Indicateur visuel de tri
             foreach (DataGridViewColumn col in dgvLocalSongs.Columns)
             {
                 col.HeaderCell.SortGlyphDirection = SortOrder.None;
@@ -262,7 +255,6 @@ namespace BitRuisseau
             MessageBox.Show(detail, "Détail du média",
                 MessageBoxButtons.OK, MessageBoxIcon.Information);
 
-            // Lecture locale simple pour les WAV (démo)
             try
             {
                 if (string.IsNullOrWhiteSpace(song.FilePath) || !File.Exists(song.FilePath))
@@ -271,7 +263,6 @@ namespace BitRuisseau
                 var ext = Path.GetExtension(song.FilePath).ToLowerInvariant();
                 if (ext != ".wav")
                 {
-                    // Pour la démo on ne lit que les WAV
                     return;
                 }
 
@@ -292,7 +283,6 @@ namespace BitRuisseau
 
         private void BtnRefreshMediatheques_Click(object sender, EventArgs e)
         {
-            // DISCOVER : on demande au protocole la liste des médiathèques opérationnelles
             var online = _protocol.GetOnlineMediatheque() ?? new string[0];
             lstMediatheques.DataSource = online;
         }
@@ -303,10 +293,8 @@ namespace BitRuisseau
             if (string.IsNullOrWhiteSpace(name))
                 return;
 
-            // Récupération du catalogue distant
             var songs = _protocol.AskCatalog(name) ?? new List<ISong>();
 
-            // RemoteSong = objet distant sérialisé, pas Song (local)
             var casted = songs
                 .OfType<RemoteSong>()
                 .ToList();
@@ -316,60 +304,71 @@ namespace BitRuisseau
         }
 
         private async void BtnImportSong_Click(object sender, EventArgs e)
-{
-    if (dgvRemoteSongs.CurrentRow == null)
-        return;
-
-    var remote = dgvRemoteSongs.CurrentRow.DataBoundItem as RemoteSong;
-    if (remote == null)
-        return;
-
-    var remoteHost = lstMediatheques.SelectedItem as string;
-    if (string.IsNullOrWhiteSpace(remoteHost))
-    {
-        MessageBox.Show("Sélectionne une médiathèque distante.");
-        return;
-    }
-
-    if (string.IsNullOrWhiteSpace(_localLibrary.RootFolder) || !Directory.Exists(_localLibrary.RootFolder))
-    {
-        MessageBox.Show("Sélectionne un dossier local.");
-        return;
-    }
-
-    if (!(_protocol is Protocole p))
-    {
-        MessageBox.Show("Protocole incompatible.");
-        return;
-    }
-
-    btnImportSong.Enabled = false;
-    try
-    {
-        var progress = new Progress<int>(pct =>
         {
-            btnImportSong.Text = $"Importer ({pct}%)";
-        });
+            if (dgvRemoteSongs.CurrentRow == null)
+                return;
 
-        var path = await p.ImportRemoteSongAsync(remote, remoteHost, _localLibrary.RootFolder, progress);
+            var remote = dgvRemoteSongs.CurrentRow.DataBoundItem as RemoteSong;
+            if (remote == null)
+                return;
 
-        // recharge bibliothèque locale
-        _localLibrary.SetFolder(_localLibrary.RootFolder);
-        _allLocalSongs = _localLibrary.Songs.ToList();
-        ApplyLocalFilterAndSort();
+            var remoteHost = lstMediatheques.SelectedItem as string;
+            if (string.IsNullOrWhiteSpace(remoteHost))
+            {
+                MessageBox.Show("Aucune médiathèque distante sélectionnée.");
+                return;
+            }
 
-        MessageBox.Show("Import OK:\n" + path);
-    }
-    catch (Exception ex)
-    {
-        MessageBox.Show("Erreur import:\n" + ex.Message);
-    }
-    finally
-    {
-        btnImportSong.Text = "Importer";
-        btnImportSong.Enabled = true;
-    }
-}
+            if (string.IsNullOrWhiteSpace(_localLibrary.RootFolder))
+            {
+                MessageBox.Show("Aucun dossier local configuré (Sélectionner dossier).");
+                return;
+            }
+
+            if (!Directory.Exists(_localLibrary.RootFolder))
+            {
+                MessageBox.Show("Le dossier local n'existe pas : " + _localLibrary.RootFolder);
+                return;
+            }
+
+            if (!(_protocol is Protocole proto))
+            {
+                MessageBox.Show("Protocole incompatible.");
+                return;
+            }
+
+            btnImportSong.Enabled = false;
+
+            try
+            {
+                var progress = new Progress<int>(pct =>
+                {
+                    this.Text = $"BitRuisseau - Import {pct}%";
+                });
+
+                var savedPath = await proto.ImportRemoteSongAsync(remote, remoteHost, _localLibrary.RootFolder, progress);
+
+                // Recharge la médiathèque locale
+                _localLibrary.SetFolder(_localLibrary.RootFolder);
+                _allLocalSongs = _localLibrary.Songs.ToList();
+                ApplyLocalFilterAndSort();
+
+                MessageBox.Show($"Import terminé :\n{savedPath}");
+
+                // Ouvre l’explorateur directement sur le fichier
+                System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{savedPath}\"");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Erreur import : " + ex.Message);
+            }
+            finally
+            {
+                this.Text = "BitRuisseau";
+                btnImportSong.Enabled = true;
+            }
+        }
+
 
 
 
@@ -390,11 +389,7 @@ namespace BitRuisseau
         public int Size { get; set; }
         public string[] Featuring { get; set; }
         public string Hash { get; private set; }
-
-        // Ajout obligatoire pour implémenter ISong
         public string Extension { get; private set; }
-
-        // Non imposé par l’interface
         public string FilePath { get; set; }
 
         public string FeaturingText =>
@@ -617,17 +612,14 @@ namespace BitRuisseau
 
         public void SendCatalog(string name)
         {
-            // Fake : rien à envoyer réellement
         }
 
         public void AskMedia(ISong song, string name, int startByte, int endByte)
         {
-            // Fake : pas d’implémentation
         }
 
         public void SendMedia(ISong song, string name, int startByte, int endByte)
         {
-            // Fake : pas d’implémentation
         }
     }
 

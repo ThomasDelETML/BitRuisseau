@@ -3,7 +3,6 @@ using System.Collections.Generic;
 
 namespace BitRuisseau
 {
-    // DTO sérialisable (pas d'interface)
     public class SongDto
     {
         public string Path { get; set; } = "";
@@ -26,13 +25,11 @@ namespace BitRuisseau
         public int? StartByte { get; set; }
         public int? EndByte { get; set; }
 
-        // IMPORTANT: on remplace List<ISong> par List<SongDto>
         public List<SongDto>? SongList { get; set; }
 
         public string? SongData { get; set; }
         public string? Hash { get; set; }
 
-        // Ultra bete test
         public string? RequestId { get; set; }
     }
 }
